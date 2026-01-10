@@ -1,9 +1,32 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { requireAuth } from '@/lib/apiAuth';
+import { checkRateLimit } from '@/lib/rateLimit';
+import { trackUsage } from '@/lib/usageTracker';
 
 const ELEVENLABS_API_URL = 'https://api.elevenlabs.io/v1';
 
 export async function POST(request: NextRequest) {
   try {
+    // Check authentication
+    const authResult = await requireAuth(request);
+    if (authResult instanceof NextResponse) {
+      return authResult;
+    }
+    const { user } = authResult;
+
+    // Check rate limit (very strict for voice cloning)
+    const rateLimit = await checkRateLimit(user.userId, 'clone-voice');
+    if (!rateLimit.allowed) {
+      return NextResponse.json(
+        {
+          error: 'Rate limit exceeded',
+          reason: rateLimit.reason,
+          retryAfter: Math.min(rateLimit.resetAt.minute, rateLimit.resetAt.hour),
+        },
+        { status: 429 }
+      );
+    }
+
     const apiKey = process.env.ELEVENLABS_API_KEY;
 
     if (!apiKey) {
@@ -64,6 +87,9 @@ export async function POST(request: NextRequest) {
 
     const data = await response.json();
 
+    // Track usage
+    await trackUsage(user.userId, 'clone-voice', {});
+
     return NextResponse.json({
       voiceId: data.voice_id,
       name: name,
@@ -80,6 +106,12 @@ export async function POST(request: NextRequest) {
 // DELETE endpoint to remove a cloned voice
 export async function DELETE(request: NextRequest) {
   try {
+    // Check authentication
+    const authResult = await requireAuth(request);
+    if (authResult instanceof NextResponse) {
+      return authResult;
+    }
+
     const apiKey = process.env.ELEVENLABS_API_KEY;
 
     if (!apiKey) {

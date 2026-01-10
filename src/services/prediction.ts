@@ -1,4 +1,5 @@
 import { Suggestion, ConversationMessage, PatientProfile } from '@/stores/app';
+import { getAuthHeaders } from '@/lib/authToken';
 
 interface BasePredictionRequest {
   conversationHistory?: ConversationMessage[];
@@ -39,11 +40,10 @@ export async function getPredictions(
       body.otherPersonSaid = request.otherPersonSaid;
     }
 
+    const headers = await getAuthHeaders();
     const response = await fetch('/api/predict', {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers,
       body: JSON.stringify(body),
     });
 

@@ -36,6 +36,10 @@ if (hasValidConfig) {
 
 // Auth providers (only create if we have an app)
 const googleProvider = new GoogleAuthProvider();
+googleProvider.setCustomParameters({
+  prompt: 'select_account'  // Forces account picker even if already logged in
+});
+
 const appleProvider = new OAuthProvider('apple.com');
 appleProvider.addScope('email');
 appleProvider.addScope('name');

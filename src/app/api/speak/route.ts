@@ -1,4 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { requireAuth } from '@/lib/apiAuth';
+import { checkRateLimit } from '@/lib/rateLimit';
+import { trackUsage } from '@/lib/usageTracker';
 
 const ELEVENLABS_API_URL = 'https://api.elevenlabs.io/v1';
 
@@ -16,6 +19,26 @@ interface SpeakRequest {
 
 export async function POST(request: NextRequest) {
   try {
+    // Check authentication
+    const authResult = await requireAuth(request);
+    if (authResult instanceof NextResponse) {
+      return authResult;
+    }
+    const { user } = authResult;
+
+    // Check rate limit
+    const rateLimit = await checkRateLimit(user.userId, 'speak');
+    if (!rateLimit.allowed) {
+      return NextResponse.json(
+        {
+          error: 'Rate limit exceeded',
+          reason: rateLimit.reason,
+          retryAfter: Math.min(rateLimit.resetAt.minute, rateLimit.resetAt.hour),
+        },
+        { status: 429 }
+      );
+    }
+
     const body: SpeakRequest = await request.json();
     const { text, voiceId, modelId, stability, similarityBoost, speed } = body;
 
@@ -70,6 +93,9 @@ export async function POST(request: NextRequest) {
 
     // Get the complete audio response
     const audioBuffer = await response.arrayBuffer();
+
+    // Track usage (characters sent to TTS)
+    await trackUsage(user.userId, 'speak', { characters: text.length });
 
     return new NextResponse(audioBuffer, {
       headers: {

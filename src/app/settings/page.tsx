@@ -737,6 +737,16 @@ export default function SettingsPage() {
                 </p>
               </div>
             </section>
+
+            {/* Admin Link */}
+            <section>
+              <Link
+                href="/admin"
+                className="block w-full p-4 md:p-5 bg-gray-800 dark:bg-gray-800 hover:bg-gray-700 dark:hover:bg-gray-700 rounded-2xl text-center text-gray-300 hover:text-white transition-all duration-200"
+              >
+                <span className="text-sm font-medium">Admin Dashboard</span>
+              </Link>
+            </section>
           </div>
         </div>
       </main>

@@ -1,11 +1,34 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { GoogleGenerativeAI } from '@google/generative-ai';
+import { requireAuth } from '@/lib/apiAuth';
+import { checkRateLimit } from '@/lib/rateLimit';
+import { trackUsage } from '@/lib/usageTracker';
 
 // Initialize Gemini client
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || '');
 
 export async function POST(request: NextRequest) {
   try {
+    // Check authentication
+    const authResult = await requireAuth(request);
+    if (authResult instanceof NextResponse) {
+      return authResult;
+    }
+    const { user } = authResult;
+
+    // Check rate limit
+    const rateLimit = await checkRateLimit(user.userId, 'transcribe');
+    if (!rateLimit.allowed) {
+      return NextResponse.json(
+        {
+          error: 'Rate limit exceeded',
+          reason: rateLimit.reason,
+          retryAfter: Math.min(rateLimit.resetAt.minute, rateLimit.resetAt.hour),
+        },
+        { status: 429 }
+      );
+    }
+
     if (!process.env.GEMINI_API_KEY) {
       return NextResponse.json(
         { error: 'Gemini API key not configured' },
@@ -53,6 +76,10 @@ export async function POST(request: NextRequest) {
 
     const response = result.response;
     const transcript = response.text().trim();
+
+    // Track usage - estimate audio duration from file size (rough: ~16KB per second for webm)
+    const estimatedSeconds = Math.ceil(audioFile.size / 16000);
+    await trackUsage(user.userId, 'transcribe', { audioDuration: estimatedSeconds });
 
     return NextResponse.json({ transcript });
   } catch (error) {

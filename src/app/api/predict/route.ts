@@ -7,6 +7,9 @@ import {
   buildResponsePrompt,
 } from '@/lib/prompts';
 import { ConversationMessage, PatientProfile } from '@/stores/app';
+import { requireAuth } from '@/lib/apiAuth';
+import { checkRateLimit } from '@/lib/rateLimit';
+import { trackUsage, estimateTokens } from '@/lib/usageTracker';
 
 // Initialize Gemini client
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || '');
@@ -24,6 +27,26 @@ interface PredictRequestBody {
 
 export async function POST(request: NextRequest) {
   try {
+    // Check authentication
+    const authResult = await requireAuth(request);
+    if (authResult instanceof NextResponse) {
+      return authResult; // Return error response
+    }
+    const { user } = authResult;
+
+    // Check rate limit
+    const rateLimit = await checkRateLimit(user.userId, 'predict');
+    if (!rateLimit.allowed) {
+      return NextResponse.json(
+        {
+          error: 'Rate limit exceeded',
+          reason: rateLimit.reason,
+          retryAfter: Math.min(rateLimit.resetAt.minute, rateLimit.resetAt.hour),
+        },
+        { status: 429 }
+      );
+    }
+
     const body: PredictRequestBody = await request.json();
     const { input, otherPersonSaid, conversationHistory, patientProfile, recentPhrases } = body;
 
@@ -86,6 +109,11 @@ export async function POST(request: NextRequest) {
     suggestions = suggestions
       .filter((s) => typeof s === 'string' && s.trim().length > 0)
       .slice(0, 5);
+
+    // Track usage (estimate tokens from input + output)
+    const inputTokens = estimateTokens(userPrompt);
+    const outputTokens = estimateTokens(responseText);
+    await trackUsage(user.userId, 'predict', { tokens: inputTokens + outputTokens });
 
     return NextResponse.json({ suggestions });
   } catch (error) {

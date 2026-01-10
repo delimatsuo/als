@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useRef, useCallback } from 'react';
+import { getAuthFormHeaders } from '@/lib/authToken';
 
 interface VoiceRecorderProps {
   onVoiceCloned: (voiceId: string, voiceName: string) => void;
@@ -142,8 +143,10 @@ export function VoiceRecorder({ onVoiceCloned, onCancel }: VoiceRecorderProps) {
         formData.append('files', file);
       }
 
+      const headers = await getAuthFormHeaders();
       const response = await fetch('/api/clone-voice', {
         method: 'POST',
+        headers,
         body: formData,
       });
 

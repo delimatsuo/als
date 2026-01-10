@@ -30,6 +30,9 @@ interface UserData {
   createdAt: number;
 }
 
+// Session timeout: 30 minutes of inactivity
+const IDLE_TIMEOUT_MS = 30 * 60 * 1000;
+
 interface AuthContextType {
   user: User | null;
   loading: boolean;
@@ -39,6 +42,7 @@ interface AuthContextType {
   signInWithApple: () => Promise<void>;
   signOut: () => Promise<void>;
   syncToCloud: () => Promise<void>;
+  resetActivity: () => void; // Call this on user interactions to prevent timeout
 }
 
 const AuthContext = createContext<AuthContextType | null>(null);
@@ -49,10 +53,70 @@ function isMobileDevice(): boolean {
   return /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
 }
 
+// Detect if we're specifically on iPhone/iPod (not iPad)
+// iPad should use popup (works better in Chrome on iOS), only iPhone needs redirect
+function isIPhone(): boolean {
+  if (typeof window === 'undefined') return false;
+  return /iPhone|iPod/i.test(navigator.userAgent) && !/iPad/i.test(navigator.userAgent);
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
+  const [lastActivity, setLastActivity] = useState(Date.now());
+
+  // Reset activity timestamp (call on user interactions)
+  const resetActivity = useCallback(() => {
+    setLastActivity(Date.now());
+  }, []);
+
+  // Session timeout check
+  useEffect(() => {
+    if (!user) return;
+
+    const checkTimeout = () => {
+      const idleTime = Date.now() - lastActivity;
+      if (idleTime > IDLE_TIMEOUT_MS) {
+        console.log('[Auth] Session timeout - logging out due to inactivity');
+        if (auth) {
+          firebaseSignOut(auth).catch(console.error);
+        }
+        // Show message to user
+        if (typeof window !== 'undefined') {
+          alert('Your session has expired due to inactivity. Please sign in again.');
+        }
+      }
+    };
+
+    // Check every minute
+    const interval = setInterval(checkTimeout, 60000);
+
+    // Also check immediately
+    checkTimeout();
+
+    return () => clearInterval(interval);
+  }, [user, lastActivity]);
+
+  // Track activity on window events
+  useEffect(() => {
+    if (!user || typeof window === 'undefined') return;
+
+    const events = ['mousedown', 'keydown', 'touchstart', 'scroll'];
+    const handleActivity = () => {
+      resetActivity();
+    };
+
+    events.forEach(event => {
+      window.addEventListener(event, handleActivity, { passive: true });
+    });
+
+    return () => {
+      events.forEach(event => {
+        window.removeEventListener(event, handleActivity);
+      });
+    };
+  }, [user, resetActivity]);
 
   const {
     voiceProvider,
@@ -192,19 +256,38 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const signInWithGoogle = async () => {
     if (!auth) {
       console.error('Firebase auth not initialized');
+      alert('Firebase auth not initialized. Please refresh the page.');
       return;
     }
     try {
       setLoading(true);
-      // Use redirect on mobile for better compatibility
-      if (isMobileDevice()) {
+      console.log('[Auth] Starting Google sign-in, iPhone:', isIPhone(), 'mobile:', isMobileDevice());
+
+      // Only iPhone uses redirect (required for iOS in-app browsers)
+      // iPad, Android, and Desktop use popup (works better in Chrome on iOS)
+      if (isIPhone()) {
         await signInWithRedirect(auth, googleProvider);
       } else {
-        await signInWithPopup(auth, googleProvider);
+        try {
+          const result = await signInWithPopup(auth, googleProvider);
+          console.log('[Auth] Sign-in successful:', result.user.email);
+        } catch (popupError) {
+          // If popup blocked, try redirect as fallback
+          const errorCode = (popupError as { code?: string })?.code;
+          if (errorCode === 'auth/popup-blocked') {
+            console.log('[Auth] Popup blocked, falling back to redirect');
+            await signInWithRedirect(auth, googleProvider);
+          } else {
+            throw popupError;
+          }
+        }
       }
-    } catch (error) {
+    } catch (error: unknown) {
       console.error('Google sign-in error:', error);
       setLoading(false);
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      const errorCode = (error as { code?: string })?.code || 'unknown';
+      alert(`Sign-in failed: ${errorCode}\n${errorMessage}`);
       throw error;
     }
   };
@@ -217,11 +300,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
     try {
       setLoading(true);
-      // Use redirect on mobile for better compatibility (especially iOS)
-      if (isMobileDevice()) {
+      console.log('[Auth] Starting Apple sign-in, iPhone:', isIPhone(), 'mobile:', isMobileDevice());
+
+      // Only iPhone uses redirect, iPad and Desktop use popup
+      if (isIPhone()) {
         await signInWithRedirect(auth, appleProvider);
       } else {
-        await signInWithPopup(auth, appleProvider);
+        try {
+          await signInWithPopup(auth, appleProvider);
+        } catch (popupError) {
+          const errorCode = (popupError as { code?: string })?.code;
+          if (errorCode === 'auth/popup-blocked') {
+            console.log('[Auth] Popup blocked, falling back to redirect');
+            await signInWithRedirect(auth, appleProvider);
+          } else {
+            throw popupError;
+          }
+        }
       }
     } catch (error) {
       console.error('Apple sign-in error:', error);
@@ -255,6 +350,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         signInWithApple,
         signOut,
         syncToCloud,
+        resetActivity,
       }}
     >
       {children}

@@ -1,4 +1,5 @@
 import { PhraseCategory } from '@/stores/analytics';
+import { getAuthHeaders } from '@/lib/authToken';
 
 interface CategorizeResponse {
   categories: { [phrase: string]: PhraseCategory };
@@ -12,11 +13,10 @@ export async function categorizePhrases(
   if (phrases.length === 0) return {};
 
   try {
+    const headers = await getAuthHeaders();
     const response = await fetch('/api/categorize', {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers,
       body: JSON.stringify({ phrases }),
     });
 

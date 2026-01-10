@@ -5,14 +5,14 @@
 ## WHAT: Technical Overview
 
 ### Tech Stack
-- Runtime: Node.js 20+
+- Runtime: Node.js 20 (required by Firebase)
 - Language: TypeScript 5.x
-- Framework: Next.js 14 (App Router)
+- Framework: Next.js 15.5.9 (App Router) - **DO NOT upgrade to 16** (Turbopack breaks firebase-admin)
 - Styling: Tailwind CSS
 - State: Zustand
 - LLM: **Google Gemini API** (model: `gemini-2.0-flash`)
 - Voice: ElevenLabs API, Web Speech API (fallback)
-- Deployment: **Firebase Hosting** (NOT Vercel)
+- Deployment: **Firebase Hosting** with Cloud Functions (NOT Vercel)
 - Package Manager: npm
 
 ### LLM Configuration
@@ -30,6 +30,8 @@ src/
     page.tsx          # Main communicator interface
     settings/
       page.tsx        # User settings, voice setup
+    admin/
+      page.tsx        # Admin dashboard (user management, stats)
     api/
       predict/
         route.ts      # Gemini API - text expansion
@@ -39,6 +41,10 @@ src/
         route.ts      # Gemini API - phrase categorization
       transcribe/
         route.ts      # Audio transcription (iOS fallback)
+      admin/
+        stats/route.ts       # Admin stats API
+        users/route.ts       # Admin user list API
+        users/[userId]/route.ts  # Admin user actions API
   components/
     InputArea.tsx     # Text input with accessibility support
     ComposeArea.tsx   # Compose/edit before speaking
@@ -50,6 +56,8 @@ src/
     ListeningMode.tsx  # Speech recognition UI
     VoiceBanner.tsx   # Voice cloning promotion
     Onboarding.tsx    # First-time setup
+  contexts/
+    AuthContext.tsx   # Firebase Auth provider, session timeout
   services/
     prediction.ts     # Gemini API client
     voice.ts          # TTS + iOS audio unlock
@@ -59,6 +67,11 @@ src/
     app.ts            # Zustand store (main state)
     analytics.ts      # Usage tracking, style learning
   lib/
+    firebase.ts       # Firebase client initialization
+    firebaseAdmin.ts  # Firebase Admin SDK (server-side)
+    apiAuth.ts        # API authentication helpers
+    rateLimit.ts      # Per-user rate limiting
+    usageTracker.ts   # API usage tracking
     prompts.ts        # LLM system prompts
     phrases.ts        # Preset phrase library
     utils.ts          # Helpers
@@ -118,6 +131,20 @@ firebase deploy      # Deploy to Firebase Hosting (NOT Vercel!)
 - Minimum touch target: 44x44px for accessibility
 
 ### Environment Variables
+
+**For local development** use `.env.local`:
+```
+GEMINI_API_KEY=       # Required for Google Gemini API
+ELEVENLABS_API_KEY=   # Required for voice synthesis
+NEXT_PUBLIC_FIREBASE_API_KEY=
+NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=
+NEXT_PUBLIC_FIREBASE_PROJECT_ID=
+NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET=
+NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=
+NEXT_PUBLIC_FIREBASE_APP_ID=
+```
+
+**For production** use `.env` (read by Firebase during deployment):
 ```
 GEMINI_API_KEY=       # Required for Google Gemini API
 ELEVENLABS_API_KEY=   # Required for voice synthesis
@@ -128,5 +155,8 @@ ELEVENLABS_API_KEY=   # Required for voice synthesis
 - Don't forget ARIA labels on interactive elements
 - Don't use px for touch targets - use min-h-11 min-w-11 (44px)
 - Always handle loading and error states in API calls
-- Always use `gemini-2.5-flash` model (or latest stable version)
+- Always use `gemini-2.0-flash` model (or latest stable version)
 - Remember Gemini uses `generateContent` not `messages.create`
+- **Don't upgrade to Next.js 16** - Turbopack breaks firebase-admin
+- **Don't use `FIREBASE_` prefix** in env vars - it's reserved by Firebase
+- **Use `.env` not `.env.local`** for production secrets (Cloud Functions read `.env`)

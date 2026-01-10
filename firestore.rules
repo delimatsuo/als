@@ -2,9 +2,65 @@ rules_version = '2';
 
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Users can only read/write their own data
+    // Helper function to check if user is admin
+    function isAdmin() {
+      return request.auth != null &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isAdmin == true;
+    }
+
+    // Users collection - users can read/write their own data
     match /users/{userId} {
-      allow read, write: if request.auth != null && request.auth.uid == userId;
+      // Allow read if authenticated and it's their own document
+      allow read: if request.auth != null && request.auth.uid == userId;
+
+      // Allow create for new users (first sign-in)
+      allow create: if request.auth != null && request.auth.uid == userId;
+
+      // Allow update with restrictions:
+      // - Must be authenticated
+      // - Must be their own document
+      // - Cannot change their own status, isAdmin, or blockedAt fields
+      allow update: if request.auth != null &&
+                   request.auth.uid == userId &&
+                   (!('status' in request.resource.data) || request.resource.data.status == resource.data.status) &&
+                   (!('isAdmin' in request.resource.data) || request.resource.data.isAdmin == resource.data.isAdmin) &&
+                   (!('blockedAt' in request.resource.data) || request.resource.data.blockedAt == resource.data.blockedAt);
+
+      // Usage tracking subcollection - users can only read, server writes
+      match /usage/{date} {
+        allow read: if request.auth != null && request.auth.uid == userId;
+        // Write is done by Firebase Admin SDK on server
+      }
+    }
+
+    // Rate limiting collection - users can only read their own limits
+    match /rateLimit/{userId} {
+      allow read: if request.auth != null && request.auth.uid == userId;
+      // Write is done by Firebase Admin SDK on server
+
+      // Subcollection for per-endpoint limits
+      match /endpoints/{endpoint} {
+        allow read: if request.auth != null && request.auth.uid == userId;
+      }
+    }
+
+    // Admin access - admins can read/write all users
+    match /users/{userId} {
+      allow read, write: if isAdmin();
+    }
+
+    // Admin access to rate limits
+    match /rateLimit/{userId} {
+      allow read, write: if isAdmin();
+
+      match /endpoints/{endpoint} {
+        allow read, write: if isAdmin();
+      }
+    }
+
+    // Abuse reports - admin only
+    match /abuseReports/{reportId} {
+      allow read, write: if isAdmin();
     }
   }
 }

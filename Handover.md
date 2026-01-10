@@ -1,6 +1,6 @@
 # ALS Communicator - Handover Document
 
-**Last Updated:** January 2025
+**Last Updated:** January 9, 2025
 
 This document provides context for AI coding agents continuing work on this project. Start here to understand what has been built, what's working, and what needs attention.
 
@@ -72,13 +72,13 @@ Audio now works on iOS Safari/Chrome after implementing:
 ## Architecture
 
 ### Tech Stack
-- **Framework:** Next.js 14 (App Router)
+- **Framework:** Next.js 15.5.9 (App Router) - DO NOT upgrade to Next.js 16 (Turbopack breaks firebase-admin)
 - **Language:** TypeScript
 - **State:** Zustand (persisted to localStorage)
 - **LLM:** Google Gemini API (`gemini-2.0-flash`)
 - **TTS:** ElevenLabs API + Web Speech API fallback
 - **Styling:** Tailwind CSS
-- **Deployment:** Firebase Hosting
+- **Deployment:** Firebase Hosting with Cloud Functions
 
 ### Key Files
 
@@ -94,6 +94,12 @@ Audio now works on iOS Safari/Chrome after implementing:
 | `src/components/QuickPhrases.tsx` | Preset/learned phrases UI |
 | `src/stores/analytics.ts` | Phrase usage tracking, style learning |
 | `src/lib/prompts.ts` | LLM system prompts |
+| `src/lib/firebaseAdmin.ts` | Firebase Admin SDK initialization |
+| `src/lib/apiAuth.ts` | API authentication & user status checking |
+| `src/lib/rateLimit.ts` | Per-user rate limiting |
+| `src/lib/usageTracker.ts` | API usage tracking |
+| `src/contexts/AuthContext.tsx` | Auth provider with session timeout |
+| `src/app/admin/page.tsx` | Admin dashboard for user/usage management |
 
 ### State Management
 
@@ -110,7 +116,44 @@ Audio now works on iOS Safari/Chrome after implementing:
 
 ---
 
-## Recent Changes (This Session)
+## Recent Changes (January 9, 2025)
+
+### iPad Chrome Sign-In Fix
+- **Problem:** Google sign-in on iPad Chrome didn't show the Gmail account picker
+- **Root Cause:** Chrome on iOS has stricter privacy restrictions that break OAuth redirect flows
+- **Solution:**
+  - Changed iPad to use popup sign-in instead of redirect (only iPhone uses redirect)
+  - Added `setCustomParameters({ prompt: 'select_account' })` to force account picker
+  - Added popup-blocked fallback to redirect
+- **Files:** `src/lib/firebase.ts`, `src/contexts/AuthContext.tsx`
+
+### Firestore Rules Fix
+- **Problem:** New users couldn't sign in (write was blocked)
+- **Solution:** Separated `write` into `create` (no restrictions) and `update` (with admin field protection)
+- **File:** `firestore.rules`
+
+### Next.js Downgrade (16 → 15)
+- **Problem:** Next.js 16 uses Turbopack by default, which couldn't bundle firebase-admin properly
+- **Error:** `Cannot find package 'firebase-admin-a14c8a5423a75469'` (mangled package name)
+- **Solution:** Downgraded to Next.js 15.5.9 (uses webpack)
+- **Result:** Cloud Function size dropped from 274MB to 25MB
+
+### Cloud Environment Variables
+- **Problem:** ElevenLabs/Gemini APIs returned 500 errors in production
+- **Cause:** Environment variables weren't passed to Cloud Functions
+- **Solution:** Created `.env` file (not `.env.local`) which Firebase reads during deployment
+- **File:** `.env` (contains `GEMINI_API_KEY`, `ELEVENLABS_API_KEY`)
+
+### Admin Dashboard (Complete)
+- Full user management with block/unblock/suspend actions
+- Usage statistics and cost tracking
+- Daily usage chart
+- Top users by API cost
+- **Access:** Settings page → "Admin Dashboard" link (requires `isAdmin: true` in Firestore)
+
+---
+
+## Previous Changes
 
 1. **iOS Audio Fix**: Implemented Howler.js-style empty buffer technique with `touchend` event handling
 
@@ -178,10 +221,28 @@ firebase deploy
 ```
 
 ### Environment Variables
+
+**Local development (`.env.local`):**
+```
+GEMINI_API_KEY=       # Google Gemini API
+ELEVENLABS_API_KEY=   # ElevenLabs TTS
+
+# Firebase client-side (NEXT_PUBLIC_ prefix required)
+NEXT_PUBLIC_FIREBASE_API_KEY=
+NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=
+NEXT_PUBLIC_FIREBASE_PROJECT_ID=
+NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET=
+NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=
+NEXT_PUBLIC_FIREBASE_APP_ID=
+```
+
+**Production (`.env` - read by Firebase during deployment):**
 ```
 GEMINI_API_KEY=       # Google Gemini API
 ELEVENLABS_API_KEY=   # ElevenLabs TTS
 ```
+
+**Note:** Don't use `FIREBASE_` prefix in `.env` - it's reserved by Firebase.
 
 ---
 
@@ -198,7 +259,7 @@ ELEVENLABS_API_KEY=   # ElevenLabs TTS
 
 ---
 
-## Security Audit (January 2025)
+## Security & Abuse Prevention (January 2025)
 
 ### Summary
 | Check | Status |
@@ -206,33 +267,70 @@ ELEVENLABS_API_KEY=   # ElevenLabs TTS
 | npm audit | 0 vulnerabilities |
 | API keys in env vars | Yes (properly gitignored) |
 | Input validation | Partial |
-| Rate limiting | None |
-| Authentication | None (public APIs) |
+| Rate limiting | **Implemented** |
+| Authentication | **Implemented** (Firebase Auth required for APIs) |
+| Session timeout | **Implemented** (30 min inactivity) |
+| Usage tracking | **Implemented** (per-user Firestore) |
 
-### Findings
+### Implemented Security Features
 
-#### 1. XML Injection in Emergency API (FIXED)
+#### 1. API Authentication
+**Files:** `src/lib/firebaseAdmin.ts`, `src/lib/apiAuth.ts`
+- All API routes require Firebase Auth token in `Authorization: Bearer <token>` header
+- Server-side token verification using Firebase Admin SDK
+- Blocked/suspended user detection
+
+#### 2. Rate Limiting
+**File:** `src/lib/rateLimit.ts`
+- Per-user rate limits stored in Firestore
+- Limits: `/api/predict` (30/min, 500/hr, 5000/day), `/api/speak` (20/min, 200/hr, 2000/day)
+- Returns 429 with retry-after when exceeded
+
+#### 3. Session Timeout
+**File:** `src/contexts/AuthContext.tsx`
+- Auto-logout after 30 minutes of inactivity
+- Tracks mouse, keyboard, touch, scroll events
+- Prevents idle sessions from consuming LLM tokens
+
+#### 4. Usage Tracking
+**File:** `src/lib/usageTracker.ts`
+- Logs API usage to Firestore `/users/{userId}/usage/{date}`
+- Tracks: calls, tokens, characters, audio duration
+- Estimates cost per user
+
+#### 5. User Status Checking
+- Users can be blocked/suspended by admin
+- API routes check user status before processing
+- Blocked users get 403 Forbidden
+
+### Environment Variables Required
+```
+# Firebase Admin SDK (for server-side auth)
+FIREBASE_ADMIN_PROJECT_ID=als1-483721
+FIREBASE_ADMIN_CLIENT_EMAIL=firebase-adminsdk-xxxxx@als1-483721.iam.gserviceaccount.com
+FIREBASE_ADMIN_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n"
+```
+
+### Previous Findings (Fixed)
+
+#### XML Injection in Emergency API (FIXED)
 **File:** `src/app/api/emergency/route.ts`
-**Issue:** User-provided `patientName`, `message`, and `location` were embedded directly in TwiML XML without escaping.
-**Risk:** An attacker could inject TwiML commands.
-**Fix:** Added `escapeXml()` function to sanitize all user inputs before embedding in TwiML.
+- Added `escapeXml()` function to sanitize user inputs in TwiML
 
-#### 2. No Input Length Limits (LOW)
-**Issue:** API routes don't limit input size, allowing potential DoS via large payloads.
-**Mitigation:** Next.js has default body size limits, but explicit validation would be better.
+### Admin Dashboard (Implemented)
+**File:** `src/app/admin/page.tsx`
+**API Routes:** `src/app/api/admin/stats/route.ts`, `src/app/api/admin/users/route.ts`, `src/app/api/admin/users/[userId]/route.ts`
 
-#### 3. No Rate Limiting (LOW)
-**Issue:** APIs could be abused with repeated requests.
-**Mitigation:** Firebase Hosting provides some protection; could add explicit rate limiting.
+Features:
+- Overview tab: User counts, cost metrics, daily usage chart, top users by cost
+- Users tab: Searchable user list with status filtering, usage stats
+- User detail panel: Block/unblock/suspend users, make/remove admin, view usage history
+- Access: Settings page → "Admin Dashboard" link at bottom
+- Authorization: Only users with `isAdmin: true` in Firestore can access
 
-#### 4. No Authentication (INFO)
-**Issue:** API routes are publicly accessible.
-**Context:** This is intentional for PWA simplicity; the app doesn't handle sensitive user data (profile is stored client-side).
-
-### Recommendations
-1. Add XML escaping to emergency API (priority)
-2. Consider adding rate limiting for LLM APIs (cost protection)
-3. Add input length validation
+### Future Considerations
+1. Input length validation on API routes
+2. Email alerts for high usage accounts
 
 ---
 
@@ -253,8 +351,22 @@ ELEVENLABS_API_KEY=   # ElevenLabs TTS
 4. Run `npm run build` before any commit to verify
 
 **Key things to know:**
-- Deployment is Firebase (NOT Vercel)
+- Deployment is Firebase (NOT Vercel) - use `firebase deploy`
 - LLM is Gemini (NOT Claude)
 - iOS audio works but has system beeps (OS limitation)
 - Style learning and categorization are already implemented
 - Check `src/stores/analytics.ts` for phrase tracking logic
+
+**Important gotchas:**
+1. **DO NOT upgrade to Next.js 16** - Turbopack breaks firebase-admin bundling
+2. **Use `.env` for production secrets** - `.env.local` is not read by Cloud Functions
+3. **Don't use `FIREBASE_` prefix** in env vars - it's reserved
+4. **iPad uses popup sign-in**, iPhone uses redirect - Chrome on iOS breaks redirect flows
+5. **Admin access** requires manually setting `isAdmin: true` in Firestore `/users/{userId}`
+6. **Firestore rules** separate `create` and `update` to allow new users while protecting admin fields
+
+**Admin setup:**
+1. Go to Firebase Console → Firestore
+2. Find the user document: `/users/{userId}`
+3. Add field: `isAdmin: true`
+4. User can now access `/admin` dashboard

@@ -2,6 +2,8 @@
 // ElevenLabs provides high-quality cloned voices
 // Web Speech API is the fallback when ElevenLabs is not configured
 
+import { getAuthHeaders } from '@/lib/authToken';
+
 let currentAudio: HTMLAudioElement | null = null;
 let _currentUtterance: SpeechSynthesisUtterance | null = null;
 
@@ -242,9 +244,10 @@ async function speakWithElevenLabs(options: SpeakOptions): Promise<void> {
   let audioUrl: string;
   try {
     console.log('[Voice] Fetching audio from ElevenLabs...');
+    const headers = await getAuthHeaders();
     const response = await fetch('/api/speak', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify({ text, voiceId }),
     });
 

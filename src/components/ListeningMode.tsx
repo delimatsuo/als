@@ -7,6 +7,7 @@ import {
   isSupported as isWebSpeechSupported,
   getIsListening,
 } from '@/services/speechRecognition';
+import { getAuthFormHeaders } from '@/lib/authToken';
 
 interface ListeningModeProps {
   onTranscriptReady: (transcript: string) => void;
@@ -76,8 +77,10 @@ export function ListeningMode({
       const formData = new FormData();
       formData.append('audio', audioBlob, 'recording.webm');
 
+      const headers = await getAuthFormHeaders();
       const response = await fetch('/api/transcribe', {
         method: 'POST',
+        headers,
         body: formData,
       });
 

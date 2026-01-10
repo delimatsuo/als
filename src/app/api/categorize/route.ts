@@ -1,5 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { GoogleGenerativeAI } from '@google/generative-ai';
+import { requireAuth } from '@/lib/apiAuth';
+import { checkRateLimit } from '@/lib/rateLimit';
+import { trackUsage, estimateTokens } from '@/lib/usageTracker';
 
 // Initialize Gemini client
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || '');
@@ -53,6 +56,25 @@ interface CategorizeResponse {
 
 export async function POST(request: NextRequest): Promise<NextResponse<CategorizeResponse>> {
   try {
+    // Check authentication
+    const authResult = await requireAuth(request);
+    if (authResult instanceof NextResponse) {
+      return authResult as NextResponse<CategorizeResponse>;
+    }
+    const { user } = authResult;
+
+    // Check rate limit
+    const rateLimit = await checkRateLimit(user.userId, 'categorize');
+    if (!rateLimit.allowed) {
+      return NextResponse.json(
+        {
+          categories: {},
+          error: `Rate limit exceeded: ${rateLimit.reason}`,
+        },
+        { status: 429 }
+      );
+    }
+
     const body: CategorizeRequestBody = await request.json();
     const { phrases } = body;
 
@@ -110,6 +132,10 @@ export async function POST(request: NextRequest): Promise<NextResponse<Categoriz
           : 'other';
       });
     }
+
+    // Track usage
+    const promptText = phrases.join(' ');
+    await trackUsage(user.userId, 'categorize', { tokens: estimateTokens(promptText) * 2 });
 
     return NextResponse.json({ categories });
   } catch (error) {
